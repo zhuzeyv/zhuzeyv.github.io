@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     client: 'PC',
   });
 
-  const emUrl = `https://datacenter.eastmoney.com/api/data/v1/get?${params}`;
+  const emUrl = `http://push2ex.eastmoney.com/getTopicZTPool?${params}`;
 
   try {
     const response = await fetch(emUrl, {
