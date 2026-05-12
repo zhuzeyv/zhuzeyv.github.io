@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>炸板雷达 — A股涨停炸板筛选</title>
+<style>
+:root {
+  --bg:#0c0e13; --bg2:#13161e; --bg3:#1a1d28; --bg4:#22263a;
+  --border:rgba(255,255,255,0.06); --border2:rgba(255,255,255,0.11);
+  --text:#e2e8f4; --text2:#7a85a0; --text3:#454e66;
+  --red:#f04b4b; --red-bg:rgba(240,75,75,0.12);
+  --green:#25c07a; --green-bg:rgba(37,192,122,0.11);
+  --amber:#f0aa30; --amber-bg:rgba(240,170,48,0.12);
+  --blue:#4a9eff; --blue-bg:rgba(74,158,255,0.11);
+  --r:8px; --rlg:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;overflow-x:hidden}
+body{background:var(--bg);color:var(--text);font-family:'PingFang SC','Microsoft YaHei',-apple-system,sans-serif;min-height:100vh;font-size:14px}
+
+.shell{max-width:1360px;margin:0 auto;padding:0 24px 60px}
+
+/* Nav */
+nav{display:flex;align-items:center;justify-content:space-between;padding:16px 0;border-bottom:1px solid var(--border);margin-bottom:24px;gap:12px;flex-wrap:wrap}
+.nav-brand{display:flex;align-items:center;gap:10px}
+.nav-logo{width:36px;height:36px;background:var(--red);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.brand-name{font-size:18px;font-weight:700;letter-spacing:-.4px}
+.brand-sub{font-size:11px;color:var(--text2);margin-top:2px}
+.nav-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.date-pill{display:flex;align-items:center;gap:7px;background:var(--bg2);border:1px solid var(--border2);border-radius:20px;padding:5px 14px;font-size:13px;color:var(--text2)}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;flex-shrink:0}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.src-badge{font-size:11px;background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:4px 12px;color:var(--text2)}
+
+/* Banner */
+.banner{border-radius:var(--r);padding:11px 16px;font-size:13px;margin-bottom:16px;line-height:1.7}
+.banner-warn{background:var(--amber-bg);border:1px solid rgba(240,170,48,.25);color:var(--amber)}
+.banner-err{background:var(--red-bg);border:1px solid rgba(240,75,75,.25);color:var(--red)}
+.banner-ok{background:var(--green-bg);border:1px solid rgba(37,192,122,.2);color:var(--green)}
+.banner-info{background:var(--bg2);border:1px solid var(--border2);color:var(--text2)}
+
+/* Date row */
+.date-row{display:flex;align-items:center;gap:10px;margin-bottom:22px;flex-wrap:wrap}
+.date-label{font-size:13px;color:var(--text2)}
+input[type=date]{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:8px 12px;color:var(--text);font-size:13px;outline:none;cursor:pointer;color-scheme:dark}
+input[type=date]:focus{border-color:var(--red)}
+.btn{padding:8px 18px;border-radius:var(--r);border:none;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s,transform .1s;display:inline-flex;align-items:center;gap:7px;line-height:1;white-space:nowrap}
+.btn:hover{opacity:.82}.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--red);color:#fff}
+.btn-ghost{background:var(--bg2);color:var(--text2);border:1px solid var(--border2)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.spinner{width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .65s linear infinite;display:none;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Metrics */
+.metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px}
+@media(max-width:960px){.metrics{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:560px){.metrics{grid-template-columns:repeat(2,1fr)}}
+.metric{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rlg);padding:16px 18px}
+.metric-label{font-size:11px;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.metric-value{font-size:26px;font-weight:700;line-height:1;letter-spacing:-.5px}
+.metric-sub{font-size:11px;color:var(--text3);margin-top:5px}
+.c-red{color:var(--red)}.c-green{color:var(--green)}.c-amber{color:var(--amber)}.c-blue{color:var(--blue)}
+
+/* Tabs */
+.tabs{display:flex;border-bottom:1px solid var(--border);margin-bottom:18px;overflow-x:auto}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:9px 20px;font-size:13px;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;flex-shrink:0;transition:color .15s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--text);border-bottom-color:var(--red);font-weight:600}
+.tab-n{display:inline-block;background:var(--bg3);border-radius:10px;padding:1px 7px;font-size:11px;margin-left:5px}
+
+/* Controls */
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.ctrl-label{font-size:12px;color:var(--text2);white-space:nowrap}
+select{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:7px 10px;color:var(--text);font-size:12px;outline:none;cursor:pointer}
+select:focus{border-color:var(--red)}
+.search{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:7px 12px;color:var(--text);font-size:12px;outline:none;width:180px}
+.search::placeholder{color:var(--text3)}
+.search:focus{border-color:var(--red)}
+.result-count{font-size:12px;color:var(--text3);margin-left:auto;white-space:nowrap}
+
+/* Table */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--rlg);background:var(--bg2)}
+table{width:100%;border-collapse:collapse;min-width:860px}
+thead{background:var(--bg3)}
+th{padding:11px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;cursor:pointer;user-select:none;white-space:nowrap;border-bottom:1px solid var(--border2)}
+th:hover{color:var(--text)}
+th.active-sort{color:var(--text)}
+.sort-arr{opacity:.3;margin-left:3px}
+th.active-sort .sort-arr{opacity:1}
+td{padding:12px 14px;border-top:1px solid var(--border);vertical-align:middle;white-space:nowrap}
+tr:hover td{background:rgba(255,255,255,.025)}
+.sname{font-weight:600;font-size:14px;line-height:1.2}
+.scode{font-size:11px;color:var(--text3);margin-top:3px;font-family:monospace}
+.pct{font-weight:700}
+.pct.up{color:var(--red)}.pct.dn{color:var(--green)}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:500;white-space:nowrap}
+.tag-sector{background:var(--blue-bg);color:var(--blue)}
+.tag-hot{background:var(--red-bg);color:var(--red);font-size:10px;padding:1px 6px;margin-left:4px}
+.tag-first{background:var(--green-bg);color:var(--green);font-size:10px;padding:1px 6px;margin-left:4px}
+.open-dots{display:flex;gap:3px;margin-bottom:4px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--bg4)}
+.dot.on{background:var(--red)}
+.open-n{font-size:12px;color:var(--red);font-weight:700}
+.score-wrap{display:flex;align-items:center;gap:7px}
+.score-bar-bg{flex:1;max-width:52px;height:4px;background:var(--bg4);border-radius:2px;overflow:hidden}
+.score-fill{height:100%;border-radius:2px}
+.score-n{font-size:12px;font-weight:700;min-width:24px}
+.tval{font-size:12px;color:var(--text2);font-family:monospace}
+.empty-msg{text-align:center;padding:60px 20px;color:var(--text3);font-size:14px;line-height:2}
+.loading-msg{text-align:center;padding:50px 20px;color:var(--text2);font-size:14px}
+
+footer{margin-top:28px;font-size:12px;color:var(--text3);text-align:center;line-height:2.5}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav>
+  <div class="nav-brand">
+    <div class="nav-logo">📡</div>
+    <div>
+      <div class="brand-name">炸板雷达</div>
+      <div class="brand-sub">A股涨停炸板每日筛选</div>
+    </div>
+  </div>
+  <div class="nav-right">
+    <span class="date-pill"><span class="live-dot"></span><span id="navDate">—</span></span>
+    <span class="src-badge">数据源：东方财富</span>
+  </div>
+</nav>
+
+<div id="bannerArea"></div>
+
+<div class="date-row">
+  <span class="date-label">查询日期</span>
+  <input type="date" id="datePicker" />
+  <button class="btn btn-primary" id="queryBtn" onclick="loadData()">
+    <div class="spinner" id="spinner"></div>
+    <span id="queryBtnText">🔍 查询</span>
+  </button>
+  <button class="btn btn-ghost" onclick="goYesterday()">回到昨日</button>
+</div>
+
+<div class="metrics">
+  <div class="metric">
+    <div class="metric-label">涨停总数</div>
+    <div class="metric-value" id="mTotal">—</div>
+    <div class="metric-sub">含炸板</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">炸板数量</div>
+    <div class="metric-value c-red" id="mZb">—</div>
+    <div class="metric-sub">曾涨停后开板</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">炸板率</div>
+    <div class="metric-value c-red" id="mRate">—</div>
+    <div class="metric-sub">市场情绪参考</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">平均炸板次数</div>
+    <div class="metric-value c-amber" id="mAvg">—</div>
+    <div class="metric-sub">次数越多越弱</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">市场情绪</div>
+    <div class="metric-value" id="mEmotion">—</div>
+    <div class="metric-sub" id="mEmotionSub">—</div>
+  </div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab(0,this)">炸板（未收封）<span class="tab-n" id="tn0">0</span></div>
+  <div class="tab" onclick="switchTab(1,this)">未炸封板<span class="tab-n" id="tn1">0</span></div>
+  <div class="tab" onclick="switchTab(2,this)">全部涨停<span class="tab-n" id="tn2">0</span></div>
+</div>
+
+<div class="controls">
+  <span class="ctrl-label">行业</span>
+  <select id="fIndustry" onchange="render()"><option value="">全部</option></select>
+  <span class="ctrl-label">炸板次数</span>
+  <select id="fOpenNum" onchange="render()">
+    <option value="0">全部</option>
+    <option value="1">≥ 1次</option>
+    <option value="2">≥ 2次</option>
+    <option value="3">≥ 3次</option>
+  </select>
+  <span class="ctrl-label">市场</span>
+  <select id="fMarket" onchange="render()">
+    <option value="">全部</option>
+    <option value="sh">沪市</option>
+    <option value="sz">深市</option>
+    <option value="bj">北交所</option>
+  </select>
+  <span class="ctrl-label">排序</span>
+  <select id="fSort" onchange="render()">
+    <option value="OPEN_NUM">炸板次数</option>
+    <option value="CHANGE_RATE">收盘涨幅</option>
+    <option value="TURNOVERRATE">换手率</option>
+    <option value="DEAL_AMOUNT">成交额</option>
+    <option value="FIRST_TIME">首涨停时间</option>
+  </select>
+  <input class="search" id="fSearch" placeholder="🔍 股票名 / 代码" oninput="render()" />
+  <span class="result-count" id="resultCount"></span>
+</div>
+
+<div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>股票</th>
+        <th onclick="setSort('OPEN_NUM')">炸板次数<span class="sort-arr">↕</span></th>
+        <th onclick="setSort('FIRST_TIME')">首涨停<span class="sort-arr">↕</span></th>
+        <th onclick="setSort('LAST_TIME')">末涨停<span class="sort-arr">↕</span></th>
+        <th onclick="setSort('CHANGE_RATE')">收盘涨幅<span class="sort-arr">↕</span></th>
+        <th onclick="setSort('HIGH_PRICE')">最高价<span class="sort-arr">↕</span></th>
+        <th onclick="setSort('TURNOVERRATE')">换手率<span class="sort-arr">↕</span></th>
+        <th onclick="setSort('DEAL_AMOUNT')">成交额<span class="sort-arr">↕</span></th>
+        <th>行业</th>
+        <th onclick="setSort('TOTAL_MARKET_CAP')">市值<span class="sort-arr">↕</span></th>
+        <th>次日关注</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="11"><div class="empty-msg">选择日期后点击「查询」加载数据</div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer>
+  数据来源：东方财富数据中心 &nbsp;·&nbsp; 仅供学习参考，不构成投资建议 &nbsp;·&nbsp; 股市有风险，入市须谨慎
+</footer>
+</div>
+
+<script>
+let allData = [], currentTab = 0, sortKey = 'OPEN_NUM', sortAsc = false;
+
+// ── 工具 ──────────────────────────────────────────────────
+function prevTradeDay() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+  return d;
+}
+function toDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function updateNavDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  document.getElementById('navDate').textContent =
+    d.toLocaleDateString('zh-CN', { year:'numeric', month:'long', day:'numeric' });
+}
+
+// ── 初始化 ────────────────────────────────────────────────
+(function init() {
+  const prev = prevTradeDay();
+  const s = toDateStr(prev);
+  document.getElementById('datePicker').value = s;
+  updateNavDate(s);
+})();
+
+function goYesterday() {
+  const s = toDateStr(prevTradeDay());
+  document.getElementById('datePicker').value = s;
+  loadData();
+}
+
+// ── 数据获取（调用自己的 /api/data）─────────────────────────
+async function loadData() {
+  const dateStr = document.getElementById('datePicker').value;
+  if (!dateStr) { alert('请先选择日期'); return; }
+
+  updateNavDate(dateStr);
+  setLoading(true);
+  setBanner('info', `⏳ 正在获取 ${dateStr} 数据...`);
+
+  try {
+    // 调用同域的 Vercel 服务器函数，无跨域问题
+    const res = await fetch(`/api/data?date=${dateStr}`);
+    const json = await res.json();
+
+    if (!res.ok) throw new Error(json.error || `服务器错误 ${res.status}`);
+
+    const rows = json.data || [];
+    allData = rows;
+
+    if (rows.length === 0) {
+      setBanner('warn', `${dateStr} 暂无涨停数据，可能是非交易日或数据尚未更新`);
+    } else {
+      setBanner('ok', `加载完成：${dateStr} 共 ${rows.length} 条涨停数据`);
+    }
+
+    updateMetrics();
+    populateIndustryFilter();
+    render();
+  } catch (e) {
+    setBanner('err', `获取失败：${e.message}`);
+    setEmpty('数据加载失败，请稍后重试');
+    allData = [];
+    updateMetrics();
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ── 指标 ──────────────────────────────────────────────────
+function updateMetrics() {
+  const zb = allData.filter(s => (s.OPEN_NUM || 0) > 0);
+  const total = allData.length;
+  const zbCount = zb.length;
+  const rate = total > 0 ? ((zbCount / total) * 100).toFixed(1) : null;
+  const avg = zbCount > 0
+    ? (zb.reduce((a, r) => a + (parseInt(r.OPEN_NUM) || 0), 0) / zbCount).toFixed(1)
+    : '—';
+
+  document.getElementById('mTotal').textContent = total || '—';
+  document.getElementById('mZb').textContent    = zbCount || '—';
+  document.getElementById('mRate').textContent  = rate != null ? rate + '%' : '—';
+  document.getElementById('mAvg').textContent   = avg;
+
+  let [emotion, sub, cls] = ['—', '—', ''];
+  if (rate != null) {
+    const rn = parseFloat(rate);
+    if (rn < 20)      [emotion, sub, cls] = ['🔥 偏强', '炸板少，情绪高涨', 'c-red'];
+    else if (rn < 35) [emotion, sub, cls] = ['😐 中性', '市场分歧，谨慎操作', 'c-amber'];
+    else              [emotion, sub, cls] = ['❄️ 偏弱', '炸板多，情绪低迷', 'c-blue'];
+  }
+  const el = document.getElementById('mEmotion');
+  el.textContent = emotion; el.className = 'metric-value ' + cls;
+  document.getElementById('mEmotionSub').textContent = sub;
+
+  document.getElementById('tn0').textContent = zb.length;
+  document.getElementById('tn1').textContent = allData.filter(s => (s.OPEN_NUM||0) === 0).length;
+  document.getElementById('tn2').textContent = total;
+}
+
+function populateIndustryFilter() {
+  const inds = [...new Set(allData.map(s => s.INDUSTRY).filter(Boolean))].sort();
+  const sel = document.getElementById('fIndustry');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部</option>' +
+    inds.map(i => `<option value="${i}"${i===cur?' selected':''}>${i}</option>`).join('');
+}
+
+// ── Tab / 排序 ────────────────────────────────────────────
+function switchTab(n, el) {
+  currentTab = n;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  render();
+}
+
+function setSort(key) {
+  sortAsc = (sortKey === key) ? !sortAsc : false;
+  sortKey = key;
+  document.getElementById('fSort').value = key;
+  document.querySelectorAll('th').forEach(th => {
+    th.classList.toggle('active-sort', th.getAttribute('onclick') === `setSort('${key}')`);
+  });
+  render();
+}
+
+// ── 渲染 ──────────────────────────────────────────────────
+function render() {
+  let data = allData;
+  if (currentTab === 0) data = allData.filter(s => (s.OPEN_NUM||0) > 0);
+  else if (currentTab === 1) data = allData.filter(s => (s.OPEN_NUM||0) === 0);
+
+  const industry = document.getElementById('fIndustry').value;
+  const minOpen  = parseInt(document.getElementById('fOpenNum').value) || 0;
+  const market   = document.getElementById('fMarket').value;
+  const q        = document.getElementById('fSearch').value.trim().toLowerCase();
+  const sortSel  = document.getElementById('fSort').value;
+  if (sortSel) sortKey = sortSel;
+
+  data = data.filter(s => {
+    if (industry && s.INDUSTRY !== industry) return false;
+    if (minOpen && (s.OPEN_NUM||0) < minOpen) return false;
+    if (market) {
+      const c = String(s.SECURITY_CODE||'');
+      const m = c.startsWith('6') ? 'sh' : (c.startsWith('8')||c.startsWith('4')) ? 'bj' : 'sz';
+      if (m !== market) return false;
+    }
+    if (q) {
+      if (!(s.SECURITY_NAME||'').toLowerCase().includes(q) &&
+          !(s.SECURITY_CODE||'').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  data.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (sortKey === 'FIRST_TIME' || sortKey === 'LAST_TIME') {
+      av = av||'99:99'; bv = bv||'99:99';
+      return sortAsc ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    }
+    av = parseFloat(av)||0; bv = parseFloat(bv)||0;
+    return sortAsc ? av-bv : bv-av;
+  });
+
+  document.getElementById('resultCount').textContent = `共 ${data.length} 只`;
+  renderRows(data);
+}
+
+function renderRows(data) {
+  const tbody = document.getElementById('tbody');
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="11"><div class="empty-msg">暂无符合条件的股票</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = data.map(s => {
+    const code = String(s.SECURITY_CODE||'');
+    const mktTag = code.startsWith('6') ? '沪' : (code.startsWith('8')||code.startsWith('4')) ? '北' : '深';
+    const openNum = parseInt(s.OPEN_NUM)||0;
+    const dotsCnt = Math.min(Math.max(4, openNum), 6);
+    const dots = Array.from({length:dotsCnt},(_,i)=>`<div class="dot${i<openNum?' on':''}"></div>`).join('');
+    const cr = parseFloat(s.CHANGE_RATE)||0;
+    const crStr = (cr>=0?'+':'') + cr.toFixed(2)+'%';
+    const amt = parseFloat(s.DEAL_AMOUNT)||0;
+    const amtStr = amt>=1e8?(amt/1e8).toFixed(1)+' 亿':amt>=1e4?(amt/1e4).toFixed(0)+' 万':amt.toFixed(0);
+    const mc = parseFloat(s.TOTAL_MARKET_CAP)||0;
+    const mcStr = mc>=1e11?(mc/1e8).toFixed(0)+'亿':mc>=1e8?(mc/1e8).toFixed(1)+'亿':'—';
+    const score = calcScore(s);
+    const sc = score>=70?'var(--green)':score>=45?'var(--amber)':'var(--red)';
+    const ft = s.FIRST_TIME ? String(s.FIRST_TIME).slice(0,5) : '—';
+    const lt = s.LAST_TIME  ? String(s.LAST_TIME).slice(0,5)  : '—';
+    return `<tr>
+      <td>
+        <div class="sname">${s.SECURITY_NAME||'—'}${openNum===1&&cr>=9.8?'<span class="tag tag-hot">热</span>':''}${openNum===0?'<span class="tag tag-first">首封</span>':''}</div>
+        <div class="scode">${mktTag} · ${code}</div>
+      </td>
+      <td>${openNum>0?`<div class="open-dots">${dots}</div><div class="open-n">${openNum} 次</div>`:`<span style="color:var(--text3);font-size:12px">未炸板</span>`}</td>
+      <td><span class="tval">${ft}</span></td>
+      <td><span class="tval">${lt}</span></td>
+      <td><span class="pct ${cr>=0?'up':'dn'}">${crStr}</span></td>
+      <td style="color:var(--text2)">${parseFloat(s.HIGH_PRICE||0).toFixed(2)}</td>
+      <td style="color:var(--text2)">${parseFloat(s.TURNOVERRATE||0).toFixed(2)}%</td>
+      <td style="color:var(--text2)">${amtStr}</td>
+      <td>${s.INDUSTRY?`<span class="tag tag-sector">${s.INDUSTRY}</span>`:'—'}</td>
+      <td style="color:var(--text3);font-size:12px">${mcStr}</td>
+      <td>
+        <div class="score-wrap">
+          <div class="score-bar-bg"><div class="score-fill" style="width:${score}%;background:${sc}"></div></div>
+          <div class="score-n" style="color:${sc}">${score}</div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function calcScore(s) {
+  let score = 50;
+  const openNum = parseInt(s.OPEN_NUM)||0;
+  const cr = parseFloat(s.CHANGE_RATE)||0;
+  const tr = parseFloat(s.TURNOVERRATE)||0;
+  const ft = String(s.FIRST_TIME||'');
+  score -= openNum * 12;
+  if (cr >= 9.9) score += 20;
+  else if (cr >= 7) score += 10;
+  else if (cr < 4) score -= 10;
+  if (tr >= 8 && tr <= 18) score += 10;
+  else if (tr < 5 || tr > 30) score -= 10;
+  if (ft && ft < '10:30') score += 10;
+  else if (ft && ft > '14:30') score -= 15;
+  return Math.max(5, Math.min(99, Math.round(score)));
+}
+
+// ── UI helpers ────────────────────────────────────────────
+function setBanner(type, html) {
+  const area = document.getElementById('bannerArea');
+  if (!type) { area.innerHTML = ''; return; }
+  const icon = {warn:'⚠️',err:'❌',ok:'✅',info:'ℹ️'}[type]||'ℹ️';
+  area.innerHTML = `<div class="banner banner-${type}">${icon} ${html}</div>`;
+}
+function setLoading(on) {
+  document.getElementById('spinner').style.display = on ? 'block' : 'none';
+  document.getElementById('queryBtnText').textContent = on ? '获取中...' : '🔍 查询';
+  document.getElementById('queryBtn').disabled = on;
+  if (on) {
+    document.getElementById('tbody').innerHTML =
+      `<tr><td colspan="11"><div class="loading-msg">⏳ 正在获取数据...</div></td></tr>`;
+  }
+}
+function setEmpty(msg) {
+  document.getElementById('tbody').innerHTML =
+    `<tr><td colspan="11"><div class="empty-msg">${msg}</div></td></tr>`;
+}
+</script>
+</body>
+</html>
