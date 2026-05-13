@@ -252,7 +252,7 @@ let isHistMode=false; // true=当前显示历史数据
  
 // ── 时钟 ────────────────────────────────────────────────────
 (function tick(){
-  const bj=new Date(Date.now()+(8*60+new Date().getTimezoneOffset())*60000);
+  const bj=new Date(Date.now() + 8 * 3600 * 1000);
   document.getElementById('bjTime').textContent=
     `北京 ${pad(bj.getUTCHours())}:${pad(bj.getUTCMinutes())}`;
   setTimeout(tick,10000);
