@@ -710,65 +710,69 @@ async function loadRec() {
 function renderRec() {
   const grid = $('recGrid');
   if (!recData.length) {
-    grid.innerHTML = `<div class="rec-empty">暂无推荐数据<br><small>需在交易日 09:30 后方有数据</small></div>`;
+    grid.innerHTML = `<div class="rec-empty">暂无推荐数据<br><small>建议在 14:30–15:00 交易时段内查询</small></div>`;
     return;
   }
   grid.innerHTML = recData.map((s, i) => {
-    const cr    = parseFloat(s.change_rate) || 0;
-    const crS   = (cr >= 0 ? '+' : '') + cr.toFixed(2) + '%';
-    const crCls = cr >= 0 ? 'up' : 'dn';
-    const sc    = s.score || 50;
-    const scol  = sc >= 72 ? 'var(--green)' : sc >= 55 ? 'var(--amber)' : 'var(--red)';
-    const sealS = fmt(s.seal_fund || 0);
-    const amtS  = fmt(s.amount    || 0);
-    const on    = s.open_num || 0;
-    const buyable = s.buyable !== false && on > 0;
-    const rankLabel = ['🥇','🥈','🥉'][i] || `#${i+1}`;
-
-    // 买入状态标签
-    const buyTag = buyable
-      ? `<span class="tag" style="background:var(--green-bg);color:var(--green);font-weight:700">✅ 可买入</span>`
-      : `<span class="tag" style="background:var(--red-bg);color:var(--red)">🚫 封死买不进</span>`;
-
-    // 炸板次数标签
-    const onTag = on > 0
-      ? `<span class="tag" style="background:var(--amber-bg);color:var(--amber)">炸${on}次</span>`
-      : `<span class="tag" style="background:var(--bg3);color:var(--text3)">封死</span>`;
-
-    const srcBadge = s.source
-      ? `<span class="tag" style="background:var(--bg3);color:var(--text3);font-size:9px">${s.source}</span>` : '';
-
-    // 卡片整体边框色
-    const borderStyle = buyable ? '' : 'opacity:.6;';
-
-    return `<div class="rec-card" style="${borderStyle}" onclick="openKline('${s.code}','${s.name}',recData[${i}])">
+    const cr   = parseFloat(s.change_rate) || 0;
+    const crS  = '+' + cr.toFixed(2) + '%';
+    const sc   = s.score || 50;
+    const scol = sc >= 72 ? 'var(--green)' : sc >= 55 ? 'var(--amber)' : 'var(--red)';
+    const amtS = fmt(s.amount || 0);
+    const mv   = parseFloat(s.total_mv || 0).toFixed(0);
+    const vr   = parseFloat(s.vol_ratio || 0).toFixed(2);
+    const rankLabel = ['🥇','🥈','🥉'][i] || '#' + (i+1);
+    const volTrend  = s.vol_increasing === true
+      ? '<span class="tag" style="background:var(--green-bg);color:var(--green)">📈 量能递增</span>'
+      : s.vol_increasing === false
+      ? '<span class="tag" style="background:var(--bg3);color:var(--text3)">量能平稳</span>'
+      : '';
+    const spd5Color = (s.spd5||0) > 0 ? 'var(--green)' : (s.spd5||0) < 0 ? 'var(--red)' : 'var(--text2)';
+    return `<div class="rec-card" onclick="openKline('${s.code}','${s.name}',recData[${i}])">
       <div class="rec-top">
         <div style="flex:1;min-width:0">
           <div class="rec-name">${rankLabel} ${s.name}</div>
-          <div class="rec-code" style="margin-top:2px">${s.code} · <span class="pct ${crCls}">${crS}</span></div>
+          <div class="rec-code" style="margin-top:2px">${s.code} · <span class="up" style="font-weight:700">${crS}</span> · <span style="color:var(--text2)">${parseFloat(s.price||0).toFixed(2)}元</span></div>
         </div>
-        <div class="rec-score-wrap" style="text-align:right;flex-shrink:0;margin-left:8px">
+        <div style="text-align:right;flex-shrink:0;margin-left:8px">
           <div class="rec-score" style="color:${scol}">${sc}</div>
           <div class="rec-score-label">推荐分</div>
         </div>
       </div>
       <div class="rec-tags" style="margin-bottom:8px">
-        ${buyTag}
-        ${s.industry ? `<span class="tag t-sec">${s.industry}</span>` : ''}
-        ${s.consec >= 2 ? `<span class="tag t-hot">连${s.consec}板</span>` : ''}
-        ${onTag} ${srcBadge}
+        <span class="tag" style="background:var(--green-bg);color:var(--green);font-weight:700">✅ 可买入</span>
+        ${s.industry ? '<span class="tag t-sec">' + s.industry + '</span>' : ''}
+        ${volTrend}
       </div>
       <div class="rec-stats">
-        <div class="rec-stat"><div class="rst-label">换手率</div><div class="rst-value" style="color:var(--amber)">${parseFloat(s.turnover||0).toFixed(1)}%</div></div>
-        <div class="rec-stat"><div class="rst-label">首封时间</div><div class="rst-value">${s.first_time||'—'}</div></div>
-        <div class="rec-stat"><div class="rst-label">成交额</div><div class="rst-value">${amtS}</div></div>
-        <div class="rec-stat"><div class="rst-label">封板资金</div><div class="rst-value">${sealS}</div></div>
+        <div class="rec-stat">
+          <div class="rst-label">量比</div>
+          <div class="rst-value" style="color:${parseFloat(vr)>=2?'var(--red)':parseFloat(vr)>=1.5?'var(--amber)':'var(--text)'}">${vr}x</div>
+        </div>
+        <div class="rec-stat">
+          <div class="rst-label">总市值</div>
+          <div class="rst-value">${mv}亿</div>
+        </div>
+        <div class="rec-stat">
+          <div class="rst-label">换手率</div>
+          <div class="rst-value">${parseFloat(s.turnover||0).toFixed(2)}%</div>
+        </div>
+        <div class="rec-stat">
+          <div class="rst-label">5分钟涨跌</div>
+          <div class="rst-value" style="color:${spd5Color}">${(s.spd5||0)>=0?'+':''}${parseFloat(s.spd5||0).toFixed(2)}%</div>
+        </div>
+        <div class="rec-stat">
+          <div class="rst-label">成交额</div>
+          <div class="rst-value">${amtS}</div>
+        </div>
+        <div class="rec-stat">
+          <div class="rst-label">涨幅位置</div>
+          <div class="rst-value up">${crS}</div>
+        </div>
       </div>
-      ${(s.reasons||[]).filter(r=>r!=='封死无法买入').length
-        ? `<div class="rec-reasons" style="margin-bottom:8px">${s.reasons.filter(r=>r!=='封死无法买入').map(r=>`<span class="rec-reason">✓ ${r}</span>`).join('')}</div>`
-        : ''}
-      <div style="font-size:11px;padding:7px 10px;border-radius:6px;background:var(--bg3);line-height:1.6;color:${buyable?'var(--text2)':'var(--text3)'}">${s.suggestion||''}</div>
-      ${buyable ? `<button class="rec-kbtn" style="margin-top:8px">📈 查看K线</button>` : ''}
+      ${(s.reasons||[]).length ? '<div class="rec-reasons" style="margin-bottom:8px">' + s.reasons.map(r=>'<span class="rec-reason">✓ ' + r + '</span>').join('') + '</div>' : ''}
+      <div style="font-size:11px;padding:7px 10px;border-radius:6px;background:var(--bg3);line-height:1.6;color:var(--text2)">${s.suggestion||''}</div>
+      <button class="rec-kbtn" style="margin-top:8px">📈 查看K线</button>
     </div>`;
   }).join('');
 }
