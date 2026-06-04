@@ -15,7 +15,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self._cors()
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Cache-Control", "s-maxage=120, stale-while-revalidate=30")
+        self.send_header("Cache-Control", "s-maxage=180, stale-while-revalidate=30")
         self.end_headers()
         try:
             qs    = parse_qs(urlparse(self.path).query)
@@ -25,9 +25,11 @@ class handler(BaseHTTPRequestHandler):
                 resp = get_recommend()
             else:
                 data, source = fetch(ptype, date)
-                resp = {"data": data, "total": len(data), "qdate": date,
-                        "source": source,
-                        "message": "" if data else f"{date} 暂无数据（可能是非交易日）"}
+                resp = {
+                    "data": data, "total": len(data), "qdate": date,
+                    "source": source,
+                    "message": "" if data else f"{date} 暂无数据（可能是非交易日）",
+                }
         except Exception as e:
             resp = {"data": [], "total": 0, "error": str(e),
                     "trace": traceback.format_exc()}
@@ -56,8 +58,8 @@ def fetch(ptype, date):
     rows = []
     for _, r in df.iterrows():
         rows.append({
-            "SECURITY_CODE": str(r.get("代码","") or ""),
-            "SECURITY_NAME": str(r.get("名称","") or ""),
+            "SECURITY_CODE": str(r.get("代码", "") or ""),
+            "SECURITY_NAME": str(r.get("名称", "") or ""),
             "CHANGE_RATE":   _f(r.get("涨跌幅")),
             "CLOSE_PRICE":   _f(r.get("最新价")),
             "OPEN_NUM":      _i(r.get("炸板次数")),
@@ -67,140 +69,99 @@ def fetch(ptype, date):
             "DEAL_AMOUNT":   _f(r.get("成交额")),
             "FLOAT_MV":      _f(r.get("流通市值")),
             "CONSEC_BOARDS": _i(r.get("连板数")),
-            "INDUSTRY":      str(r.get("所属行业","") or ""),
-            "ZT_STAT":       str(r.get("涨停统计","") or ""),
+            "INDUSTRY":      str(r.get("所属行业", "") or ""),
+            "ZT_STAT":       str(r.get("涨停统计", "") or ""),
             "SEAL_FUND":     _f(r.get("封板资金")),
         })
     return rows, f"AKShare · {labels.get(ptype, ptype)}"
 
 
-# ── 短线推荐（2:30-3:00 买入）────────────────────────────────
+# ── 短线推荐（2:30–3:00 买入）────────────────────────────────
 def get_recommend():
     """
-    筛选条件：
-      · 涨幅 3%-5%（2:30可以买入，不在涨停）
-      · 量比 > 1（今日成交活跃于均值）
-      · 总市值 50-300亿
-      · 成交量递增（量比 > 1 且当日成交量 > 近5日均量）
-    评分：涨幅位置 + 量比强度 + 市值甜蜜点 + 热门板块 + 成交量趋势
+    筛选：涨幅3-5% · 量比>1 · 市值50-300亿
+    量能趋势用量比直接判断（避免逐股查K线导致超时）
+      量比 >= 2.0 → 成交量明显递增
+      量比 1.3-2.0 → 成交量温和递增
+      量比 1.0-1.3 → 成交量平稳略增
     """
     import akshare as ak
 
-    # ── 1. 拉全市场实时行情 ──────────────────────────────────
+    # 全市场实时行情（唯一耗时操作，约3-8秒）
     df = ak.stock_zh_a_spot_em()
     if df is None or df.empty:
-        return {"data": [], "qdate": today_str(),
-                "total": 0, "message": "无法获取实时行情"}
+        return {"data": [], "qdate": today_str(), "total": 0,
+                "message": "无法获取实时行情，请稍后重试"}
 
-    # ── 2. 硬筛选 ────────────────────────────────────────────
-    # 过滤ST、退市、新股（代码不规范的）
-    valid_prefix = ('0','1','2','3','6','8')
-    df = df[df['代码'].astype(str).str[:1].isin(valid_prefix)]
-    df = df[~df['名称'].astype(str).str.contains('ST|退|N|C', regex=True)]
-
+    # ── 硬筛选 ────────────────────────────────────────────────
+    # 剔除ST、退市、名称含特殊字符
+    df = df[~df["名称"].astype(str).str.contains("ST|退|N|C|B", na=False, regex=True)]
     # 涨幅 3%-5%
-    df = df[(df['涨跌幅'] >= 3.0) & (df['涨跌幅'] <= 5.0)]
-
-    # 量比 > 1（今日量 > 近期均量）
-    df = df[df['量比'] > 1.0]
-
-    # 总市值 50亿-300亿（单位：元；50亿=5e9，300亿=3e10）
-    df = df[(df['总市值'] >= 5e9) & (df['总市值'] <= 3e10)]
-
-    # 最新价 > 3元（剔除垃圾股）
-    df = df[df['最新价'] > 3.0]
+    df = df[(df["涨跌幅"] >= 3.0) & (df["涨跌幅"] <= 5.0)]
+    # 量比 > 1
+    df = df[df["量比"] > 1.0]
+    # 总市值 50亿-300亿（元：50亿=5e9, 300亿=3e10）
+    df = df[(df["总市值"] >= 5e9) & (df["总市值"] <= 3e10)]
+    # 股价 > 3元
+    df = df[df["最新价"] > 3.0]
 
     if df.empty:
-        return {"data": [], "qdate": today_str(),
-                "total": 0, "message": "当前无符合条件的股票（建议在14:30-15:00查询）"}
+        return {"data": [], "qdate": today_str(), "total": 0,
+                "message": "当前无符合条件的股票（建议在 14:30-15:00 交易时段内查询）"}
 
-    # ── 3. 获取近5日K线验证成交量递增 ────────────────────────
-    # 对候选股（最多40只）检查量的趋势
-    end_date = today_str()
-    beg_date = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=14)).strftime("%Y%m%d")
-
-    candidates = df.copy()
-    vol_trend  = {}   # code → True/False（成交量是否递增）
-
-    # 只对前40个候选检查（避免超时）
-    check_codes = candidates.nlargest(40, '量比')['代码'].tolist()
-
-    for code in check_codes:
-        try:
-            kdf = ak.stock_zh_a_hist(
-                symbol=code, period="daily",
-                start_date=beg_date, end_date=end_date,
-                adjust="qfq"
-            )
-            if kdf is not None and len(kdf) >= 3:
-                vols = kdf['成交量'].tail(5).tolist()
-                # 近3日成交量递增趋势：后两日均大于前一日
-                if len(vols) >= 3:
-                    increasing = (vols[-1] > vols[-2]) or (vols[-2] > vols[-3])
-                    vol_trend[code] = increasing
-        except Exception:
-            pass
-
-    # ── 4. 热门板块（从涨停池识别）───────────────────────────
+    # ── 热门板块（从今日涨停池快速识别）─────────────────────────
     hot_sectors = set()
     try:
-        date = last_trade_day()
-        zt_df = ak.stock_zt_pool_em(date=date)
+        zt_df = ak.stock_zt_pool_em(date=last_trade_day())
         if zt_df is not None and not zt_df.empty:
             from collections import Counter
-            sc = Counter(zt_df['所属行业'].dropna().tolist())
+            sc = Counter(zt_df["所属行业"].dropna().tolist())
             hot_sectors = {k for k, v in sc.items() if v >= 2}
     except Exception:
         pass
 
-    # ── 5. 评分 ──────────────────────────────────────────────
+    # ── 评分 ─────────────────────────────────────────────────
     rows = []
-    for _, r in candidates.iterrows():
-        code    = str(r.get('代码', ''))
-        name    = str(r.get('名称', ''))
-        chg     = _f(r.get('涨跌幅'))
-        price   = _f(r.get('最新价'))
-        vol_r   = _f(r.get('量比'))
-        hs      = _f(r.get('换手率'))
-        tot_mv  = _f(r.get('总市值'))  # 元
-        amt     = _f(r.get('成交额'))
-        spd5    = _f(r.get('5分钟涨跌'))  # 5分钟涨跌幅
-        # 行业字段名可能不同
-        industry = str(r.get('行业','') or r.get('所属行业','') or '')
+    for _, r in df.iterrows():
+        code  = str(r.get("代码", ""))
+        name  = str(r.get("名称", ""))
+        chg   = _f(r.get("涨跌幅"))
+        price = _f(r.get("最新价"))
+        vr    = _f(r.get("量比"))
+        hs    = _f(r.get("换手率"))
+        mv    = _f(r.get("总市值")) / 1e8   # 亿
+        amt   = _f(r.get("成交额"))
+        spd5  = _f(r.get("5分钟涨跌"))
+
+        # 行业字段名兼容
+        ind = str(r.get("行业", "") or r.get("所属行业", "") or "")
 
         score   = 50
         reasons = []
 
-        # 涨幅位置（3.5-4.5%最优，留有空间但不太离谱）
+        # 涨幅甜蜜区（3.5-4.5%最优）
         if 3.5 <= chg <= 4.5:
             score += 20; reasons.append("涨幅甜蜜区")
         elif 3.0 <= chg < 3.5 or 4.5 < chg <= 5.0:
             score += 10
-        
-        # 量比强度（越高说明今日越活跃）
-        if vol_r >= 2.5:
-            score += 20; reasons.append("量比超强")
-        elif vol_r >= 1.8:
-            score += 15; reasons.append("量比较强")
-        elif vol_r >= 1.3:
-            score += 8
+
+        # 量比 → 成交量递增强度
+        if vr >= 2.5:
+            score += 22; reasons.append("成交量大幅递增")
+        elif vr >= 1.8:
+            score += 16; reasons.append("成交量明显递增")
+        elif vr >= 1.3:
+            score += 10; reasons.append("成交量温和递增")
         else:
             score += 3
 
-        # 成交量递增趋势
-        if vol_trend.get(code, False):
-            score += 12; reasons.append("量能递增")
-        elif code not in vol_trend:
-            score += 5  # 未检查的给中性分
-
-        # 市值甜蜜点（100-200亿最优，流动性好且不太大）
-        mv_y = tot_mv / 1e8  # 转为亿
-        if 100 <= mv_y <= 200:
+        # 市值甜蜜点（100-200亿最优）
+        if 100 <= mv <= 200:
             score += 12; reasons.append("市值适中")
-        elif 50 <= mv_y < 100 or 200 < mv_y <= 300:
+        elif 50 <= mv < 100 or 200 < mv <= 300:
             score += 6
 
-        # 5分钟涨跌（尾盘仍在上涨说明有持续性）
+        # 5分钟涨跌（尾盘仍上行说明有持续性）
         if spd5 > 0.5:
             score += 10; reasons.append("尾盘上行")
         elif spd5 > 0:
@@ -209,43 +170,55 @@ def get_recommend():
             score -= 8
 
         # 热门板块
-        if industry and industry in hot_sectors:
+        if ind and ind in hot_sectors:
             score += 10; reasons.append("热门板块")
 
-        # 换手率（活跃但不过热）
+        # 换手率（3-8%活跃但不过热）
         if 3 <= hs <= 8:
             score += 5
         elif hs > 15:
-            score -= 5  # 过度换手，风险大
+            score -= 5
 
         score = max(5, min(99, round(score)))
 
+        # 成交量趋势文字
+        if vr >= 2.0:
+            vol_label = "📈 成交量大幅递增"
+            vol_increasing = True
+        elif vr >= 1.3:
+            vol_label = "📈 成交量递增"
+            vol_increasing = True
+        else:
+            vol_label = "➡️ 成交量平稳"
+            vol_increasing = False
+
         # 操作建议
         if score >= 75:
-            sug = "⭐ 强烈关注！量价配合好，2:30-2:50可分批建仓"
+            sug = "⭐ 强烈关注！量价配合好，2:30–2:50分批建仓"
         elif score >= 62:
-            sug = "👍 值得关注，量比活跃，可轻仓参与"
+            sug = "👍 值得关注，量比活跃，可在2:30轻仓参与"
         elif score >= 50:
             sug = "🔍 一般，建议等量比进一步放大再入场"
         else:
             sug = "⚠️ 量能偏弱，观望为主"
 
         rows.append({
-            "code":        code,
-            "name":        name,
-            "industry":    industry,
-            "change_rate": round(chg, 2),
-            "price":       round(price, 2),
-            "turnover":    round(hs, 2),
-            "vol_ratio":   round(vol_r, 2),
-            "total_mv":    round(tot_mv / 1e8, 1),  # 亿
-            "amount":      round(amt, 0),
-            "spd5":        round(spd5, 2),
-            "vol_increasing": vol_trend.get(code, None),
-            "score":       score,
-            "reasons":     reasons[:4],
-            "suggestion":  sug,
-            "buyable":     True,
+            "code":          code,
+            "name":          name,
+            "industry":      ind,
+            "change_rate":   round(chg, 2),
+            "price":         round(price, 2),
+            "turnover":      round(hs, 2),
+            "vol_ratio":     round(vr, 2),
+            "total_mv":      round(mv, 1),
+            "amount":        round(amt, 0),
+            "spd5":          round(spd5, 2),
+            "vol_increasing": vol_increasing,
+            "vol_label":     vol_label,
+            "score":         score,
+            "reasons":       reasons[:4],
+            "suggestion":    sug,
+            "buyable":       True,
         })
 
     rows.sort(key=lambda x: x["score"], reverse=True)
