@@ -692,7 +692,7 @@ async function loadRec() {
   const grid = $('recGrid');
   grid.innerHTML = `<div class="rec-loading"><div class="spin" style="display:block;width:13px;height:13px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--text2);border-radius:50%;animation:spin .65s linear infinite"></div>正在筛选推荐股...</div>`;
   try {
-    const r = await fetch(`/api/recommend?_=${Date.now()}`);
+    const r = await fetch(`/api/data?type=recommend&_=${Date.now()}`);
     const j = await r.json();
     if (j.error) throw new Error(j.error);
     recData = j.data || [];
