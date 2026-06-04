@@ -1,8 +1,8 @@
 {
   "regions": ["hkg1"],
   "functions": {
-    "api/data.py": {
-      "maxDuration": 30
-    }
+    "api/data.py":      { "maxDuration": 30 },
+    "api/recommend.py": { "maxDuration": 30 },
+    "api/kline.py":     { "maxDuration": 30 }
   }
 }
