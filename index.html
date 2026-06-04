@@ -270,7 +270,7 @@ footer{margin-top:22px;font-size:11px;color:var(--text3);text-align:center;line-
   <div class="rec-header">
     <div>
       <div class="rec-title">🎯 今日短线推荐 <span style="font-size:11px;color:var(--text3);font-weight:400">2:30 买入 · 次日冲高卖出</span></div>
-      <div class="rec-sub" id="recDate">换手率5-10% · 热门板块 · 今日封死涨停</div>
+      <div class="rec-sub" id="recDate">炸板可买 · 热门板块 · 2:30介入 · 次日冲高卖出</div>
     </div>
     <button class="rec-refresh" onclick="loadRec()">🔄 刷新推荐</button>
   </div>
@@ -699,7 +699,7 @@ async function loadRec() {
     if (j.qdate) {
       const qd = j.qdate;
       const dd = qd.length===8 ? `${qd.slice(0,4)}-${qd.slice(4,6)}-${qd.slice(6,8)}` : qd;
-      $('recDate').textContent = `${dd} · 换手率5-10% · 热门板块 · 今日封死涨停`;
+      $('recDate').textContent = `${dd} · 炸板可买 · 热门板块 · 2:30介入 · 次日冲高卖出`;
     }
     renderRec();
   } catch(e) {
@@ -710,25 +710,38 @@ async function loadRec() {
 function renderRec() {
   const grid = $('recGrid');
   if (!recData.length) {
-    grid.innerHTML = `<div class="rec-empty">暂无推荐数据<br><small>需在交易日 09:25 后方有数据</small></div>`;
+    grid.innerHTML = `<div class="rec-empty">暂无推荐数据<br><small>需在交易日 09:30 后方有数据</small></div>`;
     return;
   }
   grid.innerHTML = recData.map((s, i) => {
     const cr    = parseFloat(s.change_rate) || 0;
     const crS   = (cr >= 0 ? '+' : '') + cr.toFixed(2) + '%';
     const crCls = cr >= 0 ? 'up' : 'dn';
-    const sc    = s.score || 60;
-    const scol  = sc >= 75 ? 'var(--green)' : sc >= 58 ? 'var(--amber)' : 'var(--red)';
+    const sc    = s.score || 50;
+    const scol  = sc >= 72 ? 'var(--green)' : sc >= 55 ? 'var(--amber)' : 'var(--red)';
     const sealS = fmt(s.seal_fund || 0);
     const amtS  = fmt(s.amount    || 0);
-    const openNum = s.open_num || 0;
-    const openTag = openNum === 0
-      ? `<span class="tag" style="background:var(--green-bg);color:var(--green)">封死</span>`
-      : `<span class="tag" style="background:var(--red-bg);color:var(--red)">炸${openNum}次</span>`;
+    const on    = s.open_num || 0;
+    const buyable = s.buyable !== false && on > 0;
     const rankLabel = ['🥇','🥈','🥉'][i] || `#${i+1}`;
-    const srcBadge  = s.source
+
+    // 买入状态标签
+    const buyTag = buyable
+      ? `<span class="tag" style="background:var(--green-bg);color:var(--green);font-weight:700">✅ 可买入</span>`
+      : `<span class="tag" style="background:var(--red-bg);color:var(--red)">🚫 封死买不进</span>`;
+
+    // 炸板次数标签
+    const onTag = on > 0
+      ? `<span class="tag" style="background:var(--amber-bg);color:var(--amber)">炸${on}次</span>`
+      : `<span class="tag" style="background:var(--bg3);color:var(--text3)">封死</span>`;
+
+    const srcBadge = s.source
       ? `<span class="tag" style="background:var(--bg3);color:var(--text3);font-size:9px">${s.source}</span>` : '';
-    return `<div class="rec-card" onclick="openKline('${s.code}','${s.name}',recData[${i}])">
+
+    // 卡片整体边框色
+    const borderStyle = buyable ? '' : 'opacity:.6;';
+
+    return `<div class="rec-card" style="${borderStyle}" onclick="openKline('${s.code}','${s.name}',recData[${i}])">
       <div class="rec-top">
         <div style="flex:1;min-width:0">
           <div class="rec-name">${rankLabel} ${s.name}</div>
@@ -740,19 +753,22 @@ function renderRec() {
         </div>
       </div>
       <div class="rec-tags" style="margin-bottom:8px">
+        ${buyTag}
         ${s.industry ? `<span class="tag t-sec">${s.industry}</span>` : ''}
         ${s.consec >= 2 ? `<span class="tag t-hot">连${s.consec}板</span>` : ''}
-        ${openTag} ${srcBadge}
+        ${onTag} ${srcBadge}
       </div>
       <div class="rec-stats">
         <div class="rec-stat"><div class="rst-label">换手率</div><div class="rst-value" style="color:var(--amber)">${parseFloat(s.turnover||0).toFixed(1)}%</div></div>
         <div class="rec-stat"><div class="rst-label">首封时间</div><div class="rst-value">${s.first_time||'—'}</div></div>
-        <div class="rec-stat"><div class="rst-label">封板资金</div><div class="rst-value">${sealS}</div></div>
         <div class="rec-stat"><div class="rst-label">成交额</div><div class="rst-value">${amtS}</div></div>
+        <div class="rec-stat"><div class="rst-label">封板资金</div><div class="rst-value">${sealS}</div></div>
       </div>
-      ${(s.reasons||[]).length ? `<div class="rec-reasons" style="margin-bottom:8px">${s.reasons.map(r=>`<span class="rec-reason">✓ ${r}</span>`).join('')}</div>` : ''}
-      <div style="font-size:11px;color:var(--text2);margin-bottom:8px;line-height:1.5">${s.suggestion||''}</div>
-      <button class="rec-kbtn">📈 查看K线</button>
+      ${(s.reasons||[]).filter(r=>r!=='封死无法买入').length
+        ? `<div class="rec-reasons" style="margin-bottom:8px">${s.reasons.filter(r=>r!=='封死无法买入').map(r=>`<span class="rec-reason">✓ ${r}</span>`).join('')}</div>`
+        : ''}
+      <div style="font-size:11px;padding:7px 10px;border-radius:6px;background:var(--bg3);line-height:1.6;color:${buyable?'var(--text2)':'var(--text3)'}">${s.suggestion||''}</div>
+      ${buyable ? `<button class="rec-kbtn" style="margin-top:8px">📈 查看K线</button>` : ''}
     </div>`;
   }).join('');
 }
