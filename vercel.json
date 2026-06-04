@@ -1,6 +1,6 @@
 {
   "regions": ["hkg1"],
   "functions": {
-    "api/data.py":      { "maxDuration": 10 }
+    "api/data.py": { "maxDuration": 30 }
   }
 }
