@@ -21,9 +21,10 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
-        # 推荐不缓存（每次都取最新），其他数据缓存120秒
         qs_raw = parse_qs(urlparse(self.path).query)
-        if qs_raw.get("type", [""])[0].lower() == "recommend":
+        ptype  = qs_raw.get("type", ["prev"])[0].lower()
+        # 推荐不缓存（实时价格），其他120秒
+        if ptype == "recommend":
             self.send_header("Cache-Control", "no-store")
         else:
             self.send_header("Cache-Control", "s-maxage=120, stale-while-revalidate=30")
@@ -31,27 +32,19 @@ class handler(BaseHTTPRequestHandler):
 
         result = {}
         try:
-            ptype = qs_raw.get("type", ["prev"])[0].lower()
-            date  = normalize_date(qs_raw.get("date", [""])[0])
-
+            date = normalize_date(qs_raw.get("date", [""])[0])
             if ptype == "recommend":
                 result = handle_recommend()
             else:
                 rows, source = fetch_zt(ptype, date)
                 result = {
-                    "data":    rows,
-                    "total":   len(rows),
-                    "qdate":   date,
-                    "source":  source,
+                    "data": rows, "total": len(rows), "qdate": date,
+                    "source": source,
                     "message": "" if rows else f"{date} 暂无数据（可能是非交易日）",
                 }
         except Exception as exc:
-            result = {
-                "data":  [],
-                "total": 0,
-                "error": str(exc),
-                "trace": traceback.format_exc(),
-            }
+            result = {"data": [], "total": 0, "error": str(exc),
+                      "trace": traceback.format_exc()}
 
         self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
 
@@ -60,15 +53,11 @@ class handler(BaseHTTPRequestHandler):
 
 
 # ─────────────────────────────────────────────────────────────
-# 涨停数据（炸板雷达主表格）
+# 涨停数据
 # ─────────────────────────────────────────────────────────────
 def fetch_zt(ptype, date):
     import akshare as ak
-    label_map = {
-        "zt":   "今日涨停股池",
-        "zb":   "今日炸板股池",
-        "prev": "昨日涨停股池",
-    }
+    label_map = {"zt": "今日涨停股池", "zb": "今日炸板股池", "prev": "昨日涨停股池"}
     if ptype == "zb":
         df = ak.stock_zt_pool_zbgc_em(date=date)
     elif ptype == "prev":
@@ -78,7 +67,6 @@ def fetch_zt(ptype, date):
 
     if df is None or df.empty:
         return [], f"AKShare · {label_map.get(ptype, ptype)}"
-
     rows = []
     for _, r in df.iterrows():
         rows.append({
@@ -101,12 +89,70 @@ def fetch_zt(ptype, date):
 
 
 # ─────────────────────────────────────────────────────────────
-# 短线推荐（2:30–3:00 策略）
-# 合并三个数据池：
-#   A. 今日涨停池（含炸板）— stock_zt_pool_em
-#   B. 今日炸板专池          — stock_zt_pool_zbgc_em
-#   C. 昨日涨停炸板未回封    — stock_zt_pool_previous_em
-# 关键过滤：涨跌幅 < 9.5% 才是"当前真正可买入"
+# 新浪财经批量实时价格（快，只查候选股）
+# ─────────────────────────────────────────────────────────────
+def get_sina_prices(codes):
+    """
+    输入股票代码列表，返回 {code: {price, change_rate}} 实时数据
+    比 stock_zh_a_spot_em 快很多，只请求需要的股票
+    """
+    import requests
+
+    sina_list = []
+    for c in codes:
+        c = str(c)
+        if c.startswith('6') or c.startswith('5'):
+            sina_list.append(f'sh{c}')
+        elif c.startswith('8') or c.startswith('4'):
+            sina_list.append(f'bj{c}')
+        else:
+            sina_list.append(f'sz{c}')
+
+    result = {}
+    # 每批50只，避免URL过长
+    batch_size = 50
+    for i in range(0, len(sina_list), batch_size):
+        batch = sina_list[i:i + batch_size]
+        url = f"https://hq.sinajs.cn/list={','.join(batch)}"
+        try:
+            resp = requests.get(url, headers={
+                'Referer': 'https://finance.sina.com.cn',
+                'User-Agent': 'Mozilla/5.0',
+            }, timeout=8)
+            for line in resp.text.strip().split('\n'):
+                if '="' not in line:
+                    continue
+                key = line.split('=')[0].strip()
+                # 去掉前缀得到6位代码
+                code = (key.replace('var hq_str_sh', '')
+                           .replace('var hq_str_sz', '')
+                           .replace('var hq_str_bj', ''))
+                val = line.split('"')[1] if '"' in line else ''
+                if not val:
+                    continue
+                fields = val.split(',')
+                if len(fields) < 10:
+                    continue
+                try:
+                    prev_close = float(fields[2])
+                    cur_price  = float(fields[3])
+                    if prev_close > 0:
+                        chg = (cur_price - prev_close) / prev_close * 100
+                    else:
+                        chg = 0.0
+                    result[code] = {
+                        'price':       round(cur_price, 2),
+                        'change_rate': round(chg, 2),
+                    }
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+# 短线推荐
 # ─────────────────────────────────────────────────────────────
 def handle_recommend():
     import akshare as ak
@@ -114,9 +160,9 @@ def handle_recommend():
     date = last_trade_day()
     hot  = _hot_sectors(date)
     seen = set()
-    candidates = []
+    pool = []   # 原始候选（涨停池数据）
 
-    # ── A. 今日涨停池（实时，含炸板和封死）─────────────────────
+    # A. 今日涨停池
     try:
         df = ak.stock_zt_pool_em(date=date)
         if df is not None and not df.empty:
@@ -124,11 +170,11 @@ def handle_recommend():
                 code = str(r.get("代码", ""))
                 if code and code not in seen:
                     seen.add(code)
-                    candidates.append(_build(r, hot, "今日"))
+                    pool.append((r, "今日"))
     except Exception:
         pass
 
-    # ── B. 今日炸板专池（补充细节）──────────────────────────────
+    # B. 今日炸板专池（补充）
     try:
         df2 = ak.stock_zt_pool_zbgc_em(date=date)
         if df2 is not None and not df2.empty:
@@ -136,11 +182,11 @@ def handle_recommend():
                 code = str(r.get("代码", ""))
                 if code and code not in seen:
                     seen.add(code)
-                    candidates.append(_build(r, hot, "今日炸板"))
+                    pool.append((r, "今日炸板"))
     except Exception:
         pass
 
-    # ── C. 昨日涨停池（炸板未回封，次日延续候选）────────────────
+    # C. 昨日涨停池（昨炸板未回封的延续候选）
     try:
         df3 = ak.stock_zt_pool_previous_em(date=date)
         if df3 is not None and not df3.empty:
@@ -148,78 +194,97 @@ def handle_recommend():
                 code = str(r.get("代码", ""))
                 if code and code not in seen:
                     seen.add(code)
-                    r_copy = r.copy()
-                    candidates.append(_build(r_copy, hot, "昨日涨停"))
+                    pool.append((r, "昨日涨停"))
     except Exception:
         pass
 
-    if not candidates:
-        return {
-            "data": [], "qdate": date, "total": 0,
-            "message": "暂无数据，请确认今日为交易日且已开盘（09:30后）",
-        }
+    if not pool:
+        return {"data": [], "qdate": date, "total": 0,
+                "message": "暂无数据，请在交易日 09:30 后使用"}
 
-    # ── 换手率粗筛 ───────────────────────────────────────────────
+    # ── 用新浪实时接口更新当前价格 ───────────────────────────────
+    codes = [str(r.get("代码", "")) for r, _ in pool]
+    real_prices = {}
+    try:
+        real_prices = get_sina_prices(codes)
+    except Exception:
+        pass  # 失败则用涨停池原始数据
+
+    # ── 构建候选并打分 ────────────────────────────────────────────
+    candidates = []
+    for (r, source) in pool:
+        code = str(r.get("代码", ""))
+        # 优先用新浪实时价格，否则用涨停池数据
+        if code in real_prices:
+            real_chg   = real_prices[code]['change_rate']
+            real_price = real_prices[code]['price']
+        else:
+            real_chg   = _f(r.get("涨跌幅"))
+            real_price = _f(r.get("最新价"))
+
+        item = _build(r, source, hot, real_chg, real_price)
+        candidates.append(item)
+
+    # ── 换手率粗筛 & 分类 ────────────────────────────────────────
     candidates = [c for c in candidates if 3 <= c["turnover"] <= 20]
 
-    # ── 分类：可买入 vs 不可买入 ──────────────────────────────────
-    # 关键：涨跌幅 < 9.5% 才是"当前未在涨停价"，可以成交
     buyable     = [c for c in candidates if c["truly_buyable"]]
     not_buyable = [c for c in candidates if not c["truly_buyable"]]
 
     buyable.sort(    key=lambda x: x["score"], reverse=True)
     not_buyable.sort(key=lambda x: x["score"], reverse=True)
 
-    # 可买入优先，封死/回封补位
     combined = buyable[:8] + not_buyable[:2]
 
     return {
         "data":    combined[:10],
         "qdate":   date,
         "total":   len(combined[:10]),
-        "message": f"可买入 {len(buyable)} 只，封死/回封 {len(not_buyable)} 只",
+        "message": f"实时价格已更新 · 可买入 {len(buyable)} 只",
     }
 
 
-def _build(r, hot, source):
-    on   = _i(r.get("炸板次数"))
-    chg  = _f(r.get("涨跌幅"))
-    hs   = _f(r.get("换手率"))
-    lbs  = max(1, _i(r.get("连板数")))
-    ind  = str(r.get("所属行业", "") or "")
-    amt  = _f(r.get("成交额"))
-    mv   = _f(r.get("流通市值")) / 1e8
-    fund = _f(r.get("封板资金"))
+def _build(r, source, hot, real_chg, real_price):
+    on  = _i(r.get("炸板次数"))
+    hs  = _f(r.get("换手率"))
+    lbs = max(1, _i(r.get("连板数")))
+    ind = str(r.get("所属行业", "") or "")
+    amt = _f(r.get("成交额"))
+    mv  = _f(r.get("流通市值")) / 1e8
 
-    # 真正可买入条件：
-    # 1. 炸板过（open_num>=1）
-    # 2. 当前涨幅 < 9.5%（说明目前未在涨停价，可正常成交）
-    truly_buyable = (on >= 1) and (chg < 9.5)
+    # ── 核心判断：用实时涨跌幅 ──────────────────────────────────
+    # 真正可买入：炸板过 AND 当前实时涨幅 < 9.5%（未回封涨停）
+    truly_buyable = (on >= 1) and (real_chg < 9.5)
 
     score   = 50
     reasons = []
 
-    # 可买入状态评分
     if truly_buyable:
+        # 涨幅位置越好（3-6%）越有次日冲高空间
+        if 3.0 <= real_chg <= 5.0:
+            score += 15; reasons.append(f"涨幅适中{real_chg:.1f}%")
+        elif 5.0 < real_chg < 9.5:
+            score += 8
+        elif real_chg < 3.0:
+            score += 3
+
         if on == 1:
-            score += 20; reasons.append("炸板1次可买")
+            score += 20; reasons.append("炸板1次")
         elif on == 2:
             score += 13; reasons.append("炸板2次")
         elif on == 3:
-            score += 6;  reasons.append("炸板3次偏弱")
+            score += 6;  reasons.append("炸板3次")
         else:
             score -= 5
-    elif on >= 1 and chg >= 9.5:
-        # 炸板后回封涨停了——暂不可买
-        score -= 5;      reasons.append("已回封涨停")
+    elif on >= 1 and real_chg >= 9.5:
+        score -= 5; reasons.append("已回封涨停")
     else:
-        # 封死
-        score -= 0;      reasons.append("封死（看次日）")
+        reasons.append("封死涨停")
 
     # 换手率
     if   7 <= hs <= 12: score += 18; reasons.append("换手活跃")
-    elif 5 <= hs < 7 or 12 < hs <= 15: score += 10
-    elif 3 <= hs < 5:   score += 5
+    elif 5 <= hs <  7 or 12 < hs <= 15: score += 10
+    elif 3 <= hs <  5:  score += 5
     elif hs > 20:       score -= 5
 
     # 连板
@@ -249,35 +314,37 @@ def _build(r, hot, source):
 
     score = max(5, min(99, round(score)))
 
-    # 操作建议
+    # 建议
     if truly_buyable and score >= 72:
         sug = "⭐ 强烈推荐，2:30可分批买入"
     elif truly_buyable and score >= 60:
         sug = "👍 值得介入，注意分时走势"
     elif truly_buyable:
         sug = "🔍 可少量试探，止损3%"
-    elif on >= 1 and chg >= 9.5:
+    elif on >= 1 and real_chg >= 9.5:
         sug = "🔒 已回封涨停，暂无法买入，明日关注高开"
     else:
-        sug = "📅 封死观望，看明日是否高开"
+        sug = "📅 封死，明日关注是否高开"
+
+    vol_label = (
+        "✅ 炸板可买入" if truly_buyable else
+        "🔒 已回封涨停" if (on >= 1 and real_chg >= 9.5) else
+        "🔒 封死涨停"
+    )
 
     return {
         "code":          str(r.get("代码", "")),
         "name":          str(r.get("名称", "")),
         "industry":      ind,
-        "change_rate":   round(chg, 2),
-        "price":         round(_f(r.get("最新价")), 2),
+        "change_rate":   round(real_chg, 2),    # 实时涨跌幅
+        "price":         round(real_price, 2),   # 实时价格
         "turnover":      round(hs, 2),
         "vol_ratio":     0.0,
         "total_mv":      round(mv, 1),
         "amount":        round(amt, 0),
         "spd5":          0.0,
         "vol_increasing": truly_buyable,
-        "vol_label":     (
-            "✅ 炸板可买入" if truly_buyable else
-            "🔒 回封涨停"   if (on >= 1 and chg >= 9.5) else
-            "🔒 封死涨停"
-        ),
+        "vol_label":     vol_label,
         "open_num":      on,
         "consec":        lbs,
         "score":         score,
@@ -287,7 +354,7 @@ def _build(r, hot, source):
         "truly_buyable": truly_buyable,
         "first_time":    fmt_t(r.get("首次封板时间")),
         "last_time":     fmt_t(r.get("最后封板时间")),
-        "seal_fund":     fund,
+        "seal_fund":     _f(r.get("封板资金")),
         "zt_stat":       str(r.get("涨停统计", "") or ""),
         "source":        source,
     }
