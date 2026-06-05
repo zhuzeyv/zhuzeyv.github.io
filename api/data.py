@@ -111,7 +111,10 @@ def em_batch_price(codes):
     })
     data = resp.json()
     result = {}
-    for item in (data.get('data') or {}).get('diff', []):
+    diff = (data.get('data') or {}).get('diff', {})
+    # diff 可能是 dict{"0":{...},"1":{...}} 或 list[{...}]
+    items = diff.values() if isinstance(diff, dict) else (diff if isinstance(diff, list) else [])
+    for item in items:
         code = str(item.get('f57', ''))
         price = item.get('f2')
         chg   = item.get('f3')
