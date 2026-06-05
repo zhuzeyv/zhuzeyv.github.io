@@ -423,7 +423,10 @@ def normalize_date(s):
 
 def last_trade_day():
     d = bj_now()
-    if d.hour < 15:
+    mins = d.hour * 60 + d.minute
+    # 只有在 09:25 之前（市场尚未开盘）才取上一个交易日
+    # 09:25 到午夜：取今天（交易中或已收盘）
+    if mins < 9 * 60 + 25:
         d -= timedelta(days=1)
     while d.weekday() >= 5:
         d -= timedelta(days=1)
